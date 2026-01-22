@@ -1,0 +1,10 @@
+
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Safe Mobile</string>
+    <string name="title_activity_main">Safe Mobile</string>
+    <string name="package_name">com.safemobile.app</string>
+    <string name="custom_url_scheme">com.safemobile.app</string>
+    <string name="device_admin_label">Safe Mobile Security</string>
+    <string name="device_admin_description">Enables remote locking, wiping, and security auditing for lost or stolen devices.</string>
+</resources>
