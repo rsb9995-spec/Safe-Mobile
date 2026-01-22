@@ -1,0 +1,9 @@
+{
+  "name": " Safe Mobile",
+  "description": "A comprehensive mobile security prototype for tracking, locking, and remotely managing lost or stolen devices.",
+  "requestFramePermissions": [
+    "geolocation",
+    "camera",
+    "microphone"
+  ]
+}
