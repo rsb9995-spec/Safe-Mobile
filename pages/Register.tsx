@@ -50,6 +50,10 @@ const Register: React.FC<RegisterProps> = ({ onBack, onRegistered }) => {
           isLocked: false,
           isSilent: false,
           isPoweredOff: false,
+          // Fix: Added missing properties to satisfy DeviceState type
+          isAlarming: false,
+          pendingCommands: [],
+          networkStatus: 'wifi',
           batteryLevel: 85,
           lastActive: Date.now(),
           speed: 0,

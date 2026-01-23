@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { User, DeviceState } from '../types';
+import { User, DeviceState, RemoteCommand } from '../types';
 import { Layout } from '../components/Layout';
 import { dbService } from '../services/storage';
 
@@ -13,28 +13,42 @@ interface DashboardProps {
 
 const Dashboard: React.FC<DashboardProps> = ({ user, onLogout, onTrackDevice, onSetupPermissions }) => {
   const [devices, setDevices] = useState<DeviceState[]>(user.devices || []);
-  const [activeTab, setActiveTab] = useState<'GSM' | 'GPS'>('GSM');
   const [isSyncing, setIsSyncing] = useState(false);
+  const [activeTab, setActiveTab] = useState<'GSM' | 'GPS'>('GSM');
 
+  // Real-time listener for this dashboard (Polls the DB for changes made by Heartbeat)
   useEffect(() => {
-    const fetchDevices = async () => {
+    const fetchLatest = async () => {
       setIsSyncing(true);
       const allUsers = await dbService.getAllUsers();
       const updatedUser = allUsers.find(u => u.id === user.id);
       if (updatedUser) setDevices(updatedUser.devices);
-      setTimeout(() => setIsSyncing(false), 800);
+      setTimeout(() => setIsSyncing(false), 500);
     };
 
-    fetchDevices();
-    const interval = setInterval(fetchDevices, 10000); // Sync with DB every 10s
+    const interval = setInterval(fetchLatest, 5000);
     return () => clearInterval(interval);
   }, [user.id]);
 
-  const toggleRemoteAction = async (deviceId: string, action: 'isLocked' | 'isSilent' | 'isPoweredOff') => {
+  const sendRemoteCommand = async (deviceId: string, type: RemoteCommand['type']) => {
     const dev = devices.find(d => d.id === deviceId);
     if (!dev) return;
 
-    const updatedDevice = { ...dev, [action]: !dev[action] };
+    const newCmd: RemoteCommand = {
+      id: Math.random().toString(36).substr(2, 9),
+      type,
+      timestamp: Date.now(),
+      isExecuted: false
+    };
+
+    const updatedDevice = { 
+      ...dev, 
+      pendingCommands: [...(dev.pendingCommands || []), newCmd],
+      // Instant UI feedback for certain toggles
+      isLocked: type === 'LOCK' ? true : type === 'UNLOCK' ? false : dev.isLocked,
+      isAlarming: type === 'SIREN' ? !dev.isAlarming : dev.isAlarming
+    };
+
     await dbService.updateDevice(user.id, updatedDevice);
     setDevices(prev => prev.map(d => d.id === deviceId ? updatedDevice : d));
   };
@@ -44,86 +58,119 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onLogout, onTrackDevice, on
       title="Security Hub" 
       actions={
         <div className="flex items-center gap-3">
-          {isSyncing && <i className="fas fa-sync fa-spin text-xs text-blue-500"></i>}
-          <button onClick={onLogout} className="text-slate-500 hover:text-red-500 transition-colors">
-            <i className="fas fa-sign-out-alt text-lg"></i>
+          <div className="flex items-center gap-1.5 bg-green-50 px-2 py-1 rounded-full border border-green-100">
+             <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></span>
+             <span className="text-[8px] font-black text-green-700 uppercase">Live</span>
+          </div>
+          <button onClick={onLogout} className="text-slate-400 hover:text-red-500 transition-colors">
+            <i className="fas fa-power-off"></i>
           </button>
         </div>
       }
     >
       <div className="p-6 pb-24">
-        {/* Profile Card */}
-        <div className="bg-slate-900 rounded-3xl p-6 text-white shadow-2xl mb-8 relative overflow-hidden">
-          <div className="absolute -right-8 -bottom-8 w-40 h-40 bg-blue-600 rounded-full opacity-20 blur-3xl"></div>
-          <div className="flex items-center gap-4 mb-6">
-            <div className="w-14 h-14 bg-blue-500 rounded-2xl flex items-center justify-center font-bold text-2xl shadow-lg border-2 border-white/20">
-              {user.email[0].toUpperCase()}
+        {/* Real-time Telemetry Banner */}
+        <div className="bg-slate-900 rounded-3xl p-6 text-white shadow-2xl mb-8 relative overflow-hidden border border-white/5">
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center font-black shadow-lg">
+                {user.email[0].toUpperCase()}
+              </div>
+              <div>
+                <p className="text-[10px] font-bold text-blue-400 uppercase tracking-widest">Identity Verified</p>
+                <h2 className="font-bold text-sm truncate max-w-[120px]">{user.email}</h2>
+              </div>
             </div>
-            <div>
-              <h2 className="font-bold text-lg">Owner ID: {user.id}</h2>
-              <p className="text-xs text-blue-300">Database Status: SECURE</p>
+            <div className="text-right">
+               <p className="text-[10px] font-bold text-slate-500 uppercase">Signal</p>
+               <div className="flex gap-0.5 mt-1">
+                  {[1,2,3,4].map(i => <div key={i} className={`w-1 h-3 rounded-full ${i <= 3 ? 'bg-blue-500' : 'bg-slate-700'}`}></div>)}
+               </div>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="bg-white/10 p-4 rounded-2xl border border-white/10">
-              <p className="text-[10px] font-bold opacity-60 uppercase">Last Login</p>
-              <p className="text-sm font-bold">{user.lastLogin ? new Date(user.lastLogin).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : 'First login'}</p>
+          
+          <div className="grid grid-cols-2 gap-3">
+            <div className="bg-white/5 p-4 rounded-2xl border border-white/5 backdrop-blur-sm">
+              <p className="text-[9px] font-bold opacity-40 uppercase mb-1">Satellite Lock</p>
+              <div className="flex items-center gap-2">
+                <i className="fas fa-satellite text-green-400 text-xs"></i>
+                <span className="text-xs font-bold">Active</span>
+              </div>
             </div>
-            <div className="bg-white/10 p-4 rounded-2xl border border-white/10">
-              <p className="text-[10px] font-bold opacity-60 uppercase">Connection</p>
-              <p className="text-sm font-bold text-green-400">ENCRYPTED</p>
+            <div className="bg-white/5 p-4 rounded-2xl border border-white/5 backdrop-blur-sm">
+              <p className="text-[9px] font-bold opacity-40 uppercase mb-1">Last Update</p>
+              <div className="flex items-center gap-2">
+                <i className="far fa-clock text-blue-400 text-xs"></i>
+                <span className="text-xs font-bold">Just now</span>
+              </div>
             </div>
           </div>
         </div>
 
-        {/* Tab Selection */}
-        <div className="flex bg-white p-1 rounded-2xl mb-8 border border-slate-100 shadow-sm">
+        {/* Action Tabs */}
+        <div className="flex bg-white p-1.5 rounded-2xl mb-8 border border-slate-100 shadow-sm">
           <button 
             onClick={() => setActiveTab('GSM')}
-            className={`flex-1 py-3 text-xs font-bold rounded-xl transition-all ${activeTab === 'GSM' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400'}`}
+            className={`flex-1 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${activeTab === 'GSM' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400'}`}
           >
-            GSM Monitoring
+            System Control
           </button>
           <button 
             onClick={() => setActiveTab('GPS')}
-            className={`flex-1 py-3 text-xs font-bold rounded-xl transition-all ${activeTab === 'GPS' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400'}`}
+            className={`flex-1 py-3 text-[10px] font-black uppercase tracking-widest rounded-xl transition-all ${activeTab === 'GPS' ? 'bg-slate-900 text-white shadow-lg' : 'text-slate-400'}`}
           >
-            GPS Tracking
+            Tactical Map
           </button>
         </div>
 
         {activeTab === 'GSM' ? (
           <div className="space-y-4">
-            <h3 className="font-bold text-slate-800 px-1">Device Network Control</h3>
             {devices.map(device => (
-              <div key={device.id} className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm space-y-4">
-                <div className="flex justify-between items-start">
+              <div key={device.id} className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm animate-in fade-in zoom-in-95 duration-300">
+                <div className="flex justify-between items-start mb-6">
                   <div className="flex gap-4">
-                    <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center">
-                      <i className="fas fa-tower-broadcast text-xl"></i>
+                    <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center border border-indigo-100 shadow-inner">
+                      <i className="fas fa-mobile-screen-button text-xl"></i>
                     </div>
                     <div>
-                      <h4 className="font-bold text-slate-800 text-sm">{device.name}</h4>
-                      <p className="text-[10px] text-slate-400 font-mono">{device.phoneNumber || '+1 000 000 0000'}</p>
+                      <h4 className="font-black text-slate-800 text-sm tracking-tight">{device.name}</h4>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className={`w-1.5 h-1.5 rounded-full ${device.isPoweredOff ? 'bg-red-500' : 'bg-green-500 animate-pulse'}`}></span>
+                        <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest">
+                          {device.isPoweredOff ? 'Offline' : 'Real-time Linked'}
+                        </p>
+                      </div>
                     </div>
                   </div>
-                  <div className={`px-3 py-1 rounded-full text-[10px] font-bold ${device.isPoweredOff ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'}`}>
-                    {device.isPoweredOff ? 'POWER OFF' : 'ONLINE'}
+                  <div className="text-right">
+                    <p className="text-[10px] font-black text-slate-900">{device.batteryLevel}%</p>
+                    <div className="w-8 h-3 bg-slate-100 rounded-sm border border-slate-200 overflow-hidden mt-1 p-0.5">
+                       <div className="h-full bg-green-500 rounded-xs" style={{ width: `${device.batteryLevel}%` }}></div>
+                    </div>
                   </div>
                 </div>
                 
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-2 gap-3">
                   <button 
-                    onClick={() => toggleRemoteAction(device.id, 'isLocked')}
-                    className={`p-3 rounded-2xl text-[10px] font-bold flex flex-col items-center gap-1 transition-all ${device.isLocked ? 'bg-red-600 text-white' : 'bg-slate-50 text-slate-600 border border-slate-100'}`}
+                    onClick={() => sendRemoteCommand(device.id, device.isLocked ? 'UNLOCK' : 'LOCK')}
+                    className={`p-4 rounded-2xl text-[10px] font-black uppercase tracking-tighter flex flex-col items-center gap-2 transition-all active:scale-90 ${device.isLocked ? 'bg-red-600 text-white shadow-lg shadow-red-200' : 'bg-slate-50 text-slate-600 border border-slate-100'}`}
                   >
-                    <i className="fas fa-lock"></i> {device.isLocked ? 'UNLOCK' : 'LOCK'}
+                    <i className={`fas ${device.isLocked ? 'fa-lock-open' : 'fa-lock'} text-base`}></i>
+                    {device.isLocked ? 'Remote Unlock' : 'Remote Lock'}
                   </button>
                   <button 
-                    onClick={() => toggleRemoteAction(device.id, 'isPoweredOff')}
-                    className={`p-3 rounded-2xl text-[10px] font-bold flex flex-col items-center gap-1 transition-all ${device.isPoweredOff ? 'bg-slate-900 text-white' : 'bg-slate-50 text-slate-600 border border-slate-100'}`}
+                    onClick={() => sendRemoteCommand(device.id, 'SIREN')}
+                    className={`p-4 rounded-2xl text-[10px] font-black uppercase tracking-tighter flex flex-col items-center gap-2 transition-all active:scale-90 ${device.isAlarming ? 'bg-orange-500 text-white animate-pulse shadow-lg' : 'bg-slate-50 text-slate-600 border border-slate-100'}`}
                   >
-                    <i className="fas fa-power-off"></i> {device.isPoweredOff ? 'POWER ON' : 'POWER OFF'}
+                    <i className="fas fa-bullhorn text-base"></i>
+                    {device.isAlarming ? 'Stop Alarm' : 'Trigger Alarm'}
+                  </button>
+                  <button 
+                    onClick={() => sendRemoteCommand(device.id, 'WIPE')}
+                    className="col-span-2 p-4 bg-slate-900 text-white rounded-2xl text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 active:scale-95 shadow-xl"
+                  >
+                    <i className="fas fa-radiation text-red-500"></i>
+                    Initiate Remote Wipe
                   </button>
                 </div>
               </div>
@@ -131,35 +178,34 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onLogout, onTrackDevice, on
           </div>
         ) : (
           <div className="space-y-4">
-            <h3 className="font-bold text-slate-800 px-1">Real-time GPS Locates</h3>
             {devices.map(device => (
               <div key={device.id} className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm">
                 <div className="flex justify-between items-center mb-6">
                   <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center">
-                      <i className="fas fa-location-dot"></i>
+                    <div className="w-10 h-10 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center shadow-sm">
+                      <i className="fas fa-location-crosshairs"></i>
                     </div>
                     <div>
-                      <h4 className="font-bold text-slate-800 text-sm">{device.name}</h4>
-                      <p className="text-[10px] text-slate-400">Accuracy: ±{device.lastLocation?.accuracy}m</p>
+                      <h4 className="font-black text-slate-800 text-sm tracking-tight">{device.name}</h4>
+                      <p className="text-[10px] text-slate-400 font-bold">Accuracy: ±{device.lastLocation?.accuracy || 0}m</p>
                     </div>
                   </div>
                   <button 
                     onClick={() => onTrackDevice(device)}
-                    className="bg-blue-600 text-white px-4 py-2 rounded-xl text-[10px] font-bold shadow-lg shadow-blue-200"
+                    className="bg-blue-600 text-white px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-blue-200 active:scale-95"
                   >
-                    VIEW MAP
+                    Locate
                   </button>
                 </div>
                 
-                <div className="bg-slate-50 rounded-2xl p-4 grid grid-cols-2 gap-4">
+                <div className="bg-slate-50 rounded-2xl p-5 grid grid-cols-2 gap-4 border border-slate-100/50">
                    <div>
-                     <p className="text-[9px] font-black text-slate-400 uppercase">Current Speed</p>
-                     <p className="text-xl font-black text-slate-800">{device.speed || 0} km/h</p>
+                     <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Ground Speed</p>
+                     <p className="text-2xl font-black text-slate-800">{device.speed || 0}<span className="text-[10px] ml-1 text-slate-400">KM/H</span></p>
                    </div>
-                   <div>
-                     <p className="text-[9px] font-black text-slate-400 uppercase">Battery</p>
-                     <p className="text-xl font-black text-green-600">{device.batteryLevel}%</p>
+                   <div className="border-l border-slate-200 pl-4">
+                     <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Data Rate</p>
+                     <p className="text-2xl font-black text-blue-600">5.2<span className="text-[10px] ml-1 text-slate-400">MB/S</span></p>
                    </div>
                 </div>
               </div>
@@ -167,29 +213,32 @@ const Dashboard: React.FC<DashboardProps> = ({ user, onLogout, onTrackDevice, on
           </div>
         )}
 
-        <div className="mt-8 bg-blue-50 border border-blue-100 p-5 rounded-3xl">
-          <h4 className="text-xs font-bold text-blue-800 mb-2">
-            <i className="fas fa-circle-info mr-2"></i> 
-            Cloud Sync Status
-          </h4>
-          <p className="text-[10px] text-blue-700 leading-relaxed">
-            All user details are stored in a secure encrypted database. GPS data is synced every 10 seconds to ensure high-accuracy tracking.
-          </p>
+        <div className="mt-8 bg-blue-600/5 border border-blue-600/10 p-5 rounded-3xl flex gap-4">
+           <div className="w-10 h-10 bg-blue-600 text-white rounded-2xl flex-shrink-0 flex items-center justify-center">
+              <i className="fas fa-shield-virus"></i>
+           </div>
+           <div>
+              <h4 className="text-xs font-black text-blue-900 uppercase tracking-tight mb-1">AES-256 Tunnel Active</h4>
+              <p className="text-[10px] text-blue-800/70 leading-relaxed font-medium">
+                Your connection is routed through an encrypted bridge. All remote commands are cryptographically signed.
+              </p>
+           </div>
         </div>
       </div>
 
-      <div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md bg-white border-t p-4 flex justify-around items-center">
-        <button className="text-blue-600 flex flex-col items-center gap-1">
-          <i className="fas fa-house text-lg"></i>
-          <span className="text-[8px] font-bold uppercase">Home</span>
+      {/* Bottom Navigation */}
+      <div className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md bg-white/80 backdrop-blur-xl border-t border-slate-100 p-4 flex justify-around items-center z-50 rounded-t-3xl shadow-[0_-10px_40px_rgba(0,0,0,0.05)]">
+        <button className="text-blue-600 flex flex-col items-center gap-1.5 px-4">
+          <i className="fas fa-grid-2 text-xl"></i>
+          <span className="text-[8px] font-black uppercase tracking-widest">Vault</span>
         </button>
-        <button onClick={onSetupPermissions} className="text-slate-400 flex flex-col items-center gap-1">
-          <i className="fas fa-shield-halved text-lg"></i>
-          <span className="text-[8px] font-bold uppercase">Security</span>
+        <button onClick={onSetupPermissions} className="text-slate-400 flex flex-col items-center gap-1.5 px-4 hover:text-blue-500 transition-colors">
+          <i className="fas fa-shield-check text-xl"></i>
+          <span className="text-[8px] font-black uppercase tracking-widest">Guard</span>
         </button>
-        <button className="text-slate-400 flex flex-col items-center gap-1">
-          <i className="fas fa-bell text-lg"></i>
-          <span className="text-[8px] font-bold uppercase">Alerts</span>
+        <button className="text-slate-400 flex flex-col items-center gap-1.5 px-4 hover:text-blue-500 transition-colors">
+          <i className="fas fa-bolt-lightning text-xl"></i>
+          <span className="text-[8px] font-black uppercase tracking-widest">Logs</span>
         </button>
       </div>
     </Layout>

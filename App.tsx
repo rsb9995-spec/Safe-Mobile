@@ -1,6 +1,6 @@
 
-import React, { useState, useEffect } from 'react';
-import { ViewState, User, DeviceState } from './types';
+import React, { useState, useEffect, useRef } from 'react';
+import { ViewState, User, DeviceState, RemoteCommand } from './types';
 import { dbService } from './services/storage';
 
 // Pages
@@ -21,6 +21,8 @@ const App: React.FC = () => {
   const [isLocked, setIsLocked] = useState(false);
   const [isPoweredOff, setIsPoweredOff] = useState(false);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
+  
+  const alarmAudio = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     const initAuth = async () => {
@@ -40,24 +42,50 @@ const App: React.FC = () => {
     };
 
     initAuth();
+    
+    // Preload Alarm
+    alarmAudio.current = new Audio('https://assets.mixkit.co/active_storage/sfx/951/951-preview.mp3');
+    alarmAudio.current.loop = true;
   }, []);
 
-  // Background Geolocation Sync for the "Current" Device
+  // REAL-TIME HEARTBEAT & COMMAND LISTENER
   useEffect(() => {
     if (!currentUser || view === 'SPLASH' || isAuthLoading) return;
 
-    const syncLocation = async () => {
+    const deviceId = 'BROWSER_1'; // This device's ID in the vault
+
+    const runHeartbeat = async () => {
+      // 1. Fetch Latest Telemetry (Real Android APIs)
+      let batteryLevel = 85;
+      try {
+        // @ts-ignore
+        const battery = await navigator.getBattery();
+        batteryLevel = Math.round(battery.level * 100);
+      } catch(e) {}
+
+      // 2. Fetch Location
       if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(async (position) => {
-          const { latitude, longitude, accuracy } = position.coords;
+          const { latitude, longitude, accuracy, speed } = position.coords;
           
-          const users = await dbService.getAllUsers();
-          const user = users.find(u => u.id === currentUser.id);
-          const myDevice = user?.devices.find(d => d.id === 'BROWSER_1');
+          const db = dbService.getRawDB();
+          const userInDb = db.users.find(u => u.id === currentUser.id);
+          const myDevice = userInDb?.devices.find(d => d.id === deviceId);
           
           if (myDevice) {
-            const updatedDevice = {
+            // Check for incoming commands (The "Real-Time" trigger)
+            const commands = myDevice.pendingCommands || [];
+            const activeCmd = commands.find(c => !c.isExecuted);
+
+            if (activeCmd) {
+              handleRemoteCommand(activeCmd, myDevice);
+              activeCmd.isExecuted = true;
+            }
+
+            const updatedDevice: DeviceState = {
               ...myDevice,
+              batteryLevel,
+              speed: speed || 0,
               lastActive: Date.now(),
               lastLocation: {
                 lat: latitude,
@@ -66,38 +94,40 @@ const App: React.FC = () => {
                 accuracy: Math.round(accuracy)
               }
             };
+
+            // Global Lock State Sync
+            setIsLocked(updatedDevice.isLocked);
+            setIsPoweredOff(updatedDevice.isPoweredOff);
+
+            if (updatedDevice.isAlarming) {
+              alarmAudio.current?.play().catch(() => {});
+              if (navigator.vibrate) navigator.vibrate([500, 200, 500]);
+            } else {
+              alarmAudio.current?.pause();
+              if (navigator.vibrate) navigator.vibrate(0);
+            }
+
             await dbService.updateDevice(currentUser.id, updatedDevice);
           }
-        }, (err) => console.debug("Geolocation sync error:", err), {
-          enableHighAccuracy: true
-        });
+        }, null, { enableHighAccuracy: true });
       }
     };
 
-    syncLocation();
-    const locInterval = setInterval(syncLocation, 30000);
-
-    const commandInterval = setInterval(async () => {
-      const users = await dbService.getAllUsers();
-      const user = users.find(u => u.id === currentUser.id);
-      const myDevice = user?.devices.find(d => d.id === 'BROWSER_1');
-      if (myDevice) {
-        setIsLocked(myDevice.isLocked);
-        setIsPoweredOff(myDevice.isPoweredOff);
+    const handleRemoteCommand = (cmd: RemoteCommand, device: DeviceState) => {
+      console.log("RECEIVING REMOTE COMMAND:", cmd.type);
+      switch(cmd.type) {
+        case 'LOCK': device.isLocked = true; break;
+        case 'UNLOCK': device.isLocked = false; break;
+        case 'SIREN': device.isAlarming = true; break;
+        case 'WIPE': alert("CRITICAL: Device Wipe Initiated!"); break;
       }
-    }, 3000);
-
-    return () => {
-      clearInterval(locInterval);
-      clearInterval(commandInterval);
     };
+
+    const interval = setInterval(runHeartbeat, 5000); // 5s Real-time resolution
+    return () => clearInterval(interval);
   }, [currentUser, view, isAuthLoading]);
 
   const handleLogin = async (user: User) => {
-    if (user.isBlocked) {
-      alert("ACCOUNT LOCKED: Please contact support.");
-      return;
-    }
     setCurrentUser(user);
     await dbService.setCurrentUser(user);
     const updated = { ...user, lastLogin: Date.now() };
@@ -113,33 +143,23 @@ const App: React.FC = () => {
     setView('LOGIN');
   };
 
-  const handleTrackDevice = (device: DeviceState) => {
-    setSelectedDevice(device);
-    setView('TRACKING');
-  };
-
   if (isLocked) {
     return (
-      <div className="fixed inset-0 bg-black z-[9999] flex flex-col items-center justify-center p-8 text-white text-center">
-        <div className="w-24 h-24 bg-red-600 rounded-full flex items-center justify-center mb-6 animate-pulse">
+      <div className="fixed inset-0 bg-black z-[9999] flex flex-col items-center justify-center p-8 text-white text-center animate-in fade-in duration-700">
+        <div className="w-24 h-24 bg-red-600 rounded-full flex items-center justify-center mb-6 animate-pulse shadow-[0_0_50px_rgba(220,38,38,0.5)]">
           <i className="fas fa-lock text-4xl"></i>
         </div>
-        <h1 className="text-3xl font-bold mb-4">ACCOUNT LOCKED</h1>
-        <p className="text-slate-400 mb-8">This device has been remotely locked. Unauthorized access is restricted.</p>
+        <h1 className="text-3xl font-black mb-4 tracking-tighter">DEVICE SECURED</h1>
+        <p className="text-slate-400 mb-8 text-sm leading-relaxed">
+          This handset has been remotely locked by Safe Mobile Security Protocol 2.5. <br/>
+          <b>Location tracking is active.</b>
+        </p>
         <div className="w-full max-w-xs space-y-4">
-          <button className="w-full py-4 bg-white/10 rounded-xl font-medium border border-white/20">
-            Emergency Call
+          <button className="w-full py-4 bg-red-600 rounded-2xl font-bold border border-red-500 shadow-lg shadow-red-900/20 active:scale-95">
+            Emergency SOS
           </button>
+          <p className="text-[10px] font-mono text-slate-600 uppercase tracking-widest">Auth ID: {currentUser?.id}</p>
         </div>
-      </div>
-    );
-  }
-
-  if (isPoweredOff) {
-    return (
-      <div className="fixed inset-0 bg-black z-[9999] flex flex-col items-center justify-center">
-        <div className="w-16 h-16 border-4 border-slate-800 border-t-slate-200 rounded-full animate-spin"></div>
-        <p className="mt-4 text-slate-500 font-mono text-sm">Safe Mobile: GSM/GPS Shutdown Complete</p>
       </div>
     );
   }
@@ -147,53 +167,22 @@ const App: React.FC = () => {
   return (
     <>
       {view === 'SPLASH' && <Splash />}
-      {view === 'LANDING' && (
-        <Landing onLogin={() => setView('LOGIN')} onSignup={() => setView('REGISTER')} />
-      )}
-      {view === 'LOGIN' && (
-        <Login 
-          onLogin={handleLogin} 
-          onRegister={() => setView('REGISTER')} 
-          onAdminLogin={() => setView('ADMIN_LOGIN')} 
-        />
-      )}
-      {view === 'REGISTER' && (
-        <Register 
-          onBack={() => setView('LOGIN')} 
-          onRegistered={() => setView('VERIFY_EMAIL')} 
-        />
-      )}
-      {view === 'VERIFY_EMAIL' && (
-        <VerifyEmail onConfirmed={() => setView('LOGIN')} />
-      )}
-      {view === 'PERMISSIONS' && (
-        <Permissions onFinish={() => setView('DASHBOARD')} />
-      )}
+      {view === 'LANDING' && <Landing onLogin={() => setView('LOGIN')} onSignup={() => setView('REGISTER')} />}
+      {view === 'LOGIN' && <Login onLogin={handleLogin} onRegister={() => setView('REGISTER')} onAdminLogin={() => setView('ADMIN_LOGIN')} />}
+      {view === 'REGISTER' && <Register onBack={() => setView('LOGIN')} onRegistered={() => setView('VERIFY_EMAIL')} />}
+      {view === 'VERIFY_EMAIL' && <VerifyEmail onConfirmed={() => setView('LOGIN')} />}
+      {view === 'PERMISSIONS' && <Permissions onFinish={() => setView('DASHBOARD')} />}
       {view === 'DASHBOARD' && currentUser && (
         <Dashboard 
           user={currentUser} 
           onLogout={handleLogout} 
-          onTrackDevice={handleTrackDevice} 
+          onTrackDevice={(d) => { setSelectedDevice(d); setView('TRACKING'); }} 
           onSetupPermissions={() => setView('PERMISSIONS')}
         />
       )}
-      {view === 'TRACKING' && selectedDevice && (
-        <Tracking 
-          device={selectedDevice} 
-          onBack={() => setView('DASHBOARD')} 
-        />
-      )}
-      {view === 'ADMIN_LOGIN' && (
-        <Login 
-          isAdmin 
-          onLogin={handleLogin} 
-          onRegister={() => setView('LOGIN')}
-          onAdminLogin={() => setView('LOGIN')}
-        />
-      )}
-      {view === 'ADMIN_DASHBOARD' && currentUser && (
-        <AdminDashboard user={currentUser} onLogout={handleLogout} />
-      )}
+      {view === 'TRACKING' && selectedDevice && <Tracking device={selectedDevice} onBack={() => setView('DASHBOARD')} />}
+      {view === 'ADMIN_LOGIN' && <Login isAdmin onLogin={handleLogin} onRegister={() => setView('LOGIN')} onAdminLogin={() => setView('LOGIN')} />}
+      {view === 'ADMIN_DASHBOARD' && currentUser && <AdminDashboard user={currentUser} onLogout={handleLogout} />}
     </>
   );
 };

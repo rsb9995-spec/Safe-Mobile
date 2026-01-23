@@ -14,19 +14,29 @@ export interface LoginEntry {
   status: 'SUCCESS' | 'FAILED';
 }
 
+export interface RemoteCommand {
+  id: string;
+  type: 'LOCK' | 'UNLOCK' | 'SIREN' | 'WIPE' | 'MSG';
+  payload?: string;
+  timestamp: number;
+  isExecuted: boolean;
+}
+
 export interface DeviceState {
   id: string;
   name: string;
   isLocked: boolean;
   isSilent: boolean;
   isPoweredOff: boolean;
+  isAlarming: boolean; // Real-time alarm state
   lastLocation?: DeviceLocation;
-  locationHistory: DeviceLocation[]; // New: Permanent history storage
+  locationHistory: DeviceLocation[];
   batteryLevel: number;
   lastActive: number;
   speed: number;
   phoneNumber: string;
-  speedLimit?: number;
+  pendingCommands: RemoteCommand[];
+  networkStatus: 'wifi' | 'cellular' | 'none';
 }
 
 export interface User {
@@ -39,7 +49,7 @@ export interface User {
   isEmailVerified: boolean;
   createdAt: number;
   lastLogin?: number;
-  loginHistory: LoginEntry[]; // New: Permanent login records
+  loginHistory: LoginEntry[];
 }
 
 export type ViewState = 

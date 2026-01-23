@@ -11,14 +11,12 @@ interface TrackingProps {
 
 const Tracking: React.FC<TrackingProps> = ({ device: initialDevice, onBack }) => {
   const [device, setDevice] = useState<DeviceState>(initialDevice);
-  const [pulse, setPulse] = useState(true);
   const [isAlarming, setIsAlarming] = useState(false);
   const [loadingDirections, setLoadingDirections] = useState(false);
 
   // Auto-refresh the tracked device data to see live movements
   useEffect(() => {
     const interval = setInterval(async () => {
-      setPulse(p => !p);
       const db = dbService.getRawDB();
       // Find the user who owns this device
       const owner = db.users.find(u => u.devices.some(d => d.id === initialDevice.id));
@@ -73,17 +71,25 @@ const Tracking: React.FC<TrackingProps> = ({ device: initialDevice, onBack }) =>
   const lat = device.lastLocation?.lat || 40.7128;
   const lng = device.lastLocation?.lng || -74.0060;
   const accuracy = device.lastLocation?.accuracy || 0;
-  const mapUrl = `https://maps.google.com/maps?q=${lat},${lng}&z=16&output=embed&t=m`;
+  // Use zoom 16 as constant for the accuracy calculation
+  const zoom = 16;
+  const mapUrl = `https://maps.google.com/maps?q=${lat},${lng}&z=${zoom}&output=embed&t=m`;
 
   // Determine accuracy quality
   const getAccuracyStatus = (acc: number) => {
-    if (acc === 0) return { label: 'Unknown', color: 'text-slate-400', bg: 'bg-slate-100' };
-    if (acc < 20) return { label: 'High Precision', color: 'text-green-600', bg: 'bg-green-100' };
-    if (acc < 50) return { label: 'Fair Precision', color: 'text-yellow-600', bg: 'bg-yellow-100' };
-    return { label: 'Low Precision', color: 'text-red-600', bg: 'bg-red-100' };
+    if (acc === 0) return { label: 'Unknown', color: 'text-slate-400', bg: 'bg-slate-100', circle: 'border-slate-300 bg-slate-400/10' };
+    if (acc < 20) return { label: 'High Precision', color: 'text-green-600', bg: 'bg-green-100', circle: 'border-green-500 bg-green-500/10' };
+    if (acc < 50) return { label: 'Fair Precision', color: 'text-yellow-600', bg: 'bg-yellow-100', circle: 'border-yellow-500 bg-yellow-500/10' };
+    return { label: 'Low Precision', color: 'text-red-600', bg: 'bg-red-100', circle: 'border-red-500 bg-red-500/10' };
   };
 
   const accStatus = getAccuracyStatus(accuracy);
+
+  /**
+   * At zoom level 16, 1 pixel is roughly 2.388 meters at the equator.
+   * We calculate the radius in pixels to overlay on the map center.
+   */
+  const pixelRadius = accuracy / 2.388;
 
   return (
     <Layout title="Locate Device" onBack={onBack}>
@@ -96,6 +102,23 @@ const Tracking: React.FC<TrackingProps> = ({ device: initialDevice, onBack }) =>
           allowFullScreen
           loading="lazy"
         ></iframe>
+
+        {/* Accuracy Circle Overlay (Centered) */}
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div 
+            className={`rounded-full border-2 transition-all duration-500 ease-in-out ${accStatus.circle}`}
+            style={{ 
+              width: `${pixelRadius * 2}px`, 
+              height: `${pixelRadius * 2}px`,
+              minWidth: '20px',
+              minHeight: '20px'
+            }}
+          >
+            <div className="absolute inset-0 animate-pulse rounded-full bg-inherit opacity-30"></div>
+          </div>
+          {/* Marker Center Dot */}
+          <div className="absolute w-3 h-3 bg-blue-600 border-2 border-white rounded-full shadow-lg z-10"></div>
+        </div>
 
         {/* Floating Tracking Indicator */}
         <div className="absolute top-4 left-4 bg-white/90 backdrop-blur-md px-3 py-1.5 rounded-full shadow-lg flex items-center gap-2 border border-blue-100">
@@ -124,7 +147,7 @@ const Tracking: React.FC<TrackingProps> = ({ device: initialDevice, onBack }) =>
               <p className="text-2xl font-black text-slate-900 leading-none">
                 {accuracy}<span className="text-sm font-bold ml-0.5 text-slate-400 uppercase">m</span>
               </p>
-              <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-1">Location Radius</p>
+              <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mt-1">Confidence Area</p>
             </div>
           </div>
 

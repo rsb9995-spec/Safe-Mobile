@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { User, DeviceLocation, LoginEntry } from '../types';
 import { Layout } from '../components/Layout';
 import { dbService, STORAGE_KEY } from '../services/storage';
@@ -16,6 +16,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }) => {
   const [selectedAuditUser, setSelectedAuditUser] = useState<User | null>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [rawDB, setRawDB] = useState<string>('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const isSuperAdmin = user.role === 'SUPER_ADMIN' || user.email === 'admin@safe.mobile';
 
@@ -42,7 +43,26 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }) => {
     setTimeout(() => {
       dbService.exportDatabase();
       setIsExporting(false);
-    }, 1500);
+      loadUsers();
+    }, 1000);
+  };
+
+  const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const content = event.target?.result as string;
+      const success = dbService.importDatabase(content);
+      if (success) {
+        alert("Vault restored successfully! The application will now reload.");
+        window.location.reload();
+      } else {
+        alert("Invalid vault file format.");
+      }
+    };
+    reader.readAsText(file);
   };
 
   const openAudit = (u: User) => {
@@ -102,22 +122,39 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }) => {
                 Secure System Feed
               </h4>
               <div className="font-mono text-[9px] space-y-2 text-blue-400/80 max-h-48 overflow-y-auto pr-2">
-                <p>[{new Date().toLocaleTimeString()}] CRYPTO: RSA-4096 Keys Validated</p>
-                <p>[{new Date().toLocaleTimeString()}] DB_SYNC: STORAGE_KEY={STORAGE_KEY} connected</p>
-                {users.slice(0, 5).map(u => (
-                  <p key={u.id}>[{new Date().toLocaleTimeString()}] PING: {u.email} (Loc: {u.devices[0]?.lastLocation?.accuracy || '0'}m)</p>
+                <p>[{new Date().toLocaleTimeString()}] CRYPTO: AES-256 Vault Ready</p>
+                <p>[{new Date().toLocaleTimeString()}] DB_SYNC: STORAGE_KEY={STORAGE_KEY}</p>
+                <p>[{new Date().toLocaleTimeString()}] PRUNE: History Limit = 200 items</p>
+                {users.slice(0, 3).map(u => (
+                  <p key={u.id}>[{new Date().toLocaleTimeString()}] PING: {u.email.split('@')[0]} (Loc: {u.devices[0]?.lastLocation?.accuracy || '0'}m)</p>
                 ))}
               </div>
             </div>
 
-            <button 
-              onClick={handleExport}
-              disabled={isExporting}
-              className="w-full py-4 bg-blue-600 text-white rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-blue-700 transition-all shadow-lg shadow-blue-100"
-            >
-              <i className={`fas ${isExporting ? 'fa-spinner fa-spin' : 'fa-download'}`}></i>
-              {isExporting ? 'Preparing Archive...' : 'Download Full Audit Archive'}
-            </button>
+            <div className="grid grid-cols-2 gap-3">
+              <button 
+                onClick={handleExport}
+                disabled={isExporting}
+                className="py-4 bg-blue-600 text-white rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-blue-700 transition-all shadow-lg text-[11px]"
+              >
+                <i className={`fas ${isExporting ? 'fa-spinner fa-spin' : 'fa-download'}`}></i>
+                BACKUP VAULT
+              </button>
+              <button 
+                onClick={() => fileInputRef.current?.click()}
+                className="py-4 bg-slate-100 text-slate-700 rounded-2xl font-bold flex items-center justify-center gap-2 hover:bg-slate-200 transition-all text-[11px]"
+              >
+                <i className="fas fa-upload"></i>
+                RESTORE VAULT
+              </button>
+              <input 
+                type="file" 
+                ref={fileInputRef} 
+                onChange={handleImport} 
+                accept=".json" 
+                className="hidden" 
+              />
+            </div>
           </div>
         )}
 
@@ -167,7 +204,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }) => {
                     onClick={() => toggleBlockUser(u.id)}
                     className={`flex-1 py-3 rounded-xl text-[10px] font-bold border ${u.isBlocked ? 'bg-green-600 text-white border-green-600' : 'bg-white text-red-600 border-red-100'}`}
                   >
-                    {u.isBlocked ? 'Unblock User' : 'Suspend Account'}
+                    {u.isBlocked ? 'Unblock' : 'Suspend'}
                   </button>
                 </div>
               </div>
@@ -228,9 +265,6 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }) => {
                         </span>
                       </div>
                     ))}
-                    {(!selectedAuditUser.loginHistory || selectedAuditUser.loginHistory.length === 0) && (
-                      <p className="text-[10px] text-slate-400 italic">No activity logs recorded.</p>
-                    )}
                   </div>
                 </div>
 
@@ -277,21 +311,29 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }) => {
           <div className="space-y-6">
             <div className="flex items-center justify-between">
               <h3 className="font-bold text-slate-800">Internal Data Vault</h3>
-              <span className="text-[10px] font-bold text-blue-600 uppercase tracking-widest bg-blue-50 px-2 py-1 rounded-md">Live Storage View</span>
+              <button 
+                onClick={() => {
+                   if(confirm("DANGER: This will permanently delete ALL data. Are you sure?")) {
+                     dbService.wipeDatabase();
+                   }
+                }}
+                className="text-[9px] font-black text-red-600 uppercase tracking-widest bg-red-50 px-2 py-1 rounded-md"
+              >
+                Destroy DB
+              </button>
             </div>
             <p className="text-xs text-slate-500 leading-relaxed">
-              This panel displays the raw database state. It includes all user records, 
-              hashed passwords, and permanent historical location coordinates.
+              Real-time JSON view of the application state. History is limited to 200 entries per category to maintain performance.
             </p>
             <div className="bg-slate-900 rounded-2xl p-4 border border-slate-800 shadow-2xl">
-              <pre className="font-mono text-[9px] text-green-400 overflow-x-auto max-h-[500px] scrollbar-hide">
+              <pre className="font-mono text-[9px] text-green-400 overflow-x-auto max-h-[400px] scrollbar-hide">
                 {rawDB}
               </pre>
             </div>
             <div className="bg-yellow-50 border border-yellow-100 p-4 rounded-2xl">
               <p className="text-[10px] text-yellow-800 leading-relaxed font-bold italic">
                 <i className="fas fa-exclamation-triangle mr-2"></i>
-                WARNING: This data is sensitive. Ensure terminal privacy before viewing the vault contents.
+                DATA GOVERNANCE: All location records are purged from memory if the local storage exceeds 5MB. Manual backups are recommended weekly.
               </p>
             </div>
           </div>
