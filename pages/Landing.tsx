@@ -1,12 +1,12 @@
-
 import React from 'react';
 
 interface LandingProps {
   onLogin: () => void;
   onSignup: () => void;
+  onViewHelp: () => void;
 }
 
-const Landing: React.FC<LandingProps> = ({ onLogin, onSignup }) => {
+const Landing: React.FC<LandingProps> = ({ onLogin, onSignup, onViewHelp }) => {
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col max-w-md mx-auto shadow-2xl overflow-hidden relative">
       <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
@@ -38,13 +38,21 @@ const Landing: React.FC<LandingProps> = ({ onLogin, onSignup }) => {
       </div>
       
       <div className="p-8 text-center flex flex-col gap-4">
-        <button 
-          onClick={onLogin} 
-          className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-300 hover:text-blue-500 transition-colors"
-        >
-          Secure Admin Entrance
-        </button>
-        <p className="text-xs text-slate-400">
+        <div className="flex items-center justify-center gap-6">
+          <button 
+            onClick={onLogin} 
+            className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 hover:text-blue-500 transition-colors"
+          >
+            Admin Entrance
+          </button>
+          <button 
+            onClick={onViewHelp} 
+            className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-600 hover:text-blue-700 transition-colors flex items-center gap-2"
+          >
+            <i className="fas fa-circle-question"></i> Help Center
+          </button>
+        </div>
+        <p className="text-[10px] text-slate-400 font-medium">
           By continuing, you agree to our Terms of Service <br/> and Privacy Policy.
         </p>
       </div>

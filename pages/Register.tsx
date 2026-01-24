@@ -1,5 +1,4 @@
-
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { dbService } from '../services/storage';
 import { User } from '../types';
 
@@ -10,20 +9,31 @@ interface RegisterProps {
 
 const Register: React.FC<RegisterProps> = ({ onBack, onRegistered }) => {
   const [email, setEmail] = useState('');
+  const [emailError, setEmailError] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
 
-  const validateEmail = (email: string) => {
-    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  const EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+
+  const validateEmail = (emailStr: string) => {
+    return EMAIL_REGEX.test(emailStr);
   };
+
+  useEffect(() => {
+    if (email && !validateEmail(email)) {
+      setEmailError('Please enter a valid format (e.g., name@domain.com)');
+    } else {
+      setEmailError('');
+    }
+  }, [email]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
     if (!validateEmail(email)) {
-      setError('Please enter a valid email address.');
+      setEmailError('Identity registration requires a valid email format.');
       return;
     }
 
@@ -33,11 +43,12 @@ const Register: React.FC<RegisterProps> = ({ onBack, onRegistered }) => {
     }
 
     const db = dbService.getRawDB();
-    if (db.users.some(u => u.email === email)) {
+    if (db.users.some(u => u.email.toLowerCase() === email.toLowerCase())) {
       setError('Email already registered');
       return;
     }
 
+    // INITIALIZATION: Real GPS data will populate here on heartbeat
     const newUser: User = {
       id: Math.random().toString(36).substring(7).toUpperCase(),
       email,
@@ -45,27 +56,33 @@ const Register: React.FC<RegisterProps> = ({ onBack, onRegistered }) => {
       role: 'USER',
       devices: [
         {
-          id: 'BROWSER_1',
-          name: 'Primary Mobile Device',
+          id: 'BROWSER_PRIMARY',
+          name: 'Primary Security Node',
+          model: 'Safe Mobile Secure Web',
+          os: navigator.platform,
           isLocked: false,
           isSilent: false,
           isPoweredOff: false,
-          // Fix: Added missing properties to satisfy DeviceState type
           isAlarming: false,
           pendingCommands: [],
           networkStatus: 'wifi',
-          batteryLevel: 85,
+          batteryLevel: 100,
           lastActive: Date.now(),
           speed: 0,
-          phoneNumber: '+1 ' + Math.floor(1000000000 + Math.random() * 9000000000),
-          lastLocation: { lat: 40.7128, lng: -74.0060, timestamp: Date.now(), accuracy: 15 },
-          locationHistory: [{ lat: 40.7128, lng: -74.0060, timestamp: Date.now(), accuracy: 15 }]
+          phoneNumber: 'Pending...',
+          lastLocation: undefined,
+          locationHistory: []
         }
       ],
       isBlocked: false,
       isEmailVerified: false,
       createdAt: Date.now(),
-      loginHistory: []
+      loginHistory: [],
+      metadata: {
+        accountStatus: 'ACTIVE',
+        primaryDeviceOS: navigator.platform,
+        totalCommandsIssued: 0
+      }
     };
 
     dbService.addUser(newUser);
@@ -81,8 +98,10 @@ const Register: React.FC<RegisterProps> = ({ onBack, onRegistered }) => {
       </header>
 
       <div className="mb-10">
-        <h2 className="text-3xl font-bold text-slate-900">Create Vault</h2>
-        <p className="text-slate-500 mt-2">All data is permanently encrypted and stored.</p>
+        <h2 className="text-3xl font-black text-slate-900 tracking-tight">Initialize Vault</h2>
+        <p className="text-slate-500 mt-2 text-sm font-medium leading-relaxed">
+          Create your cryptographic identity. All telemetry data is stored in your private encrypted vault.
+        </p>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">
@@ -93,9 +112,10 @@ const Register: React.FC<RegisterProps> = ({ onBack, onRegistered }) => {
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="w-full px-4 py-4 bg-white border border-slate-100 rounded-2xl shadow-sm outline-none focus:ring-2 focus:ring-blue-600 transition-all"
+            className={`w-full px-5 py-4 bg-white border ${emailError ? 'border-red-500' : 'border-slate-200'} rounded-2xl shadow-sm outline-none focus:ring-2 focus:ring-blue-600 transition-all`}
             placeholder="owner@vault.com"
           />
+          {emailError && <p className="mt-1.5 text-[10px] text-red-500 font-bold uppercase tracking-tight">{emailError}</p>}
         </div>
 
         <div>
@@ -105,7 +125,7 @@ const Register: React.FC<RegisterProps> = ({ onBack, onRegistered }) => {
             required
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="w-full px-4 py-4 bg-white border border-slate-100 rounded-2xl shadow-sm outline-none focus:ring-2 focus:ring-blue-600 transition-all"
+            className="w-full px-5 py-4 bg-white border border-slate-200 rounded-2xl shadow-sm outline-none focus:ring-2 focus:ring-blue-600 transition-all"
             placeholder="••••••••"
           />
         </div>
@@ -117,22 +137,24 @@ const Register: React.FC<RegisterProps> = ({ onBack, onRegistered }) => {
             required
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}
-            className="w-full px-4 py-4 bg-white border border-slate-100 rounded-2xl shadow-sm outline-none focus:ring-2 focus:ring-blue-600 transition-all"
+            className="w-full px-5 py-4 bg-white border border-slate-200 rounded-2xl shadow-sm outline-none focus:ring-2 focus:ring-blue-600 transition-all"
             placeholder="••••••••"
           />
         </div>
 
         {error && (
-          <div className="bg-red-50 text-red-600 p-4 rounded-xl text-xs font-bold border border-red-100">
+          <div className="bg-red-50 text-red-600 p-5 rounded-2xl text-xs font-bold border border-red-100 flex items-center gap-3">
+            <i className="fas fa-exclamation-circle"></i>
             {error}
           </div>
         )}
 
         <button
           type="submit"
-          className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-2xl shadow-xl shadow-blue-200 transition-all active:scale-95"
+          disabled={!!emailError}
+          className="w-full py-5 bg-blue-600 hover:bg-blue-700 text-white font-black uppercase tracking-[0.2em] text-[11px] rounded-2xl shadow-xl shadow-blue-100 transition-all active:scale-95 disabled:opacity-50"
         >
-          Initialize Secure Vault
+          Provision Secure Guard
         </button>
       </form>
     </div>

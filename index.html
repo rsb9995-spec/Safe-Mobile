@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -14,6 +13,9 @@
     <title>Safe Mobile - Security Suite</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Leaflet Mapping Engine -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
         body {
@@ -34,6 +36,92 @@
         @keyframes pulse {
             0%, 100% { opacity: 1; }
             50% { opacity: .7; }
+        }
+
+        /* Tactical Leaflet Overrides */
+        .leaflet-container {
+            background: #e2e8f0;
+            cursor: crosshair;
+        }
+        .leaflet-popup-content-wrapper {
+            background: #0f172a;
+            color: white;
+            border-radius: 1rem;
+            padding: 4px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        .leaflet-popup-tip {
+            background: #0f172a;
+        }
+        .leaflet-div-icon {
+            background: transparent;
+            border: none;
+        }
+        .custom-marker-live {
+            width: 24px;
+            height: 24px;
+            background: #2563eb;
+            border: 3px solid white;
+            border-radius: 50%;
+            box-shadow: 0 0 15px rgba(37, 99, 235, 0.6);
+            transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .pulse-ring {
+            position: absolute;
+            top: -6px;
+            left: -6px;
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: rgba(37, 99, 235, 0.3);
+            animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+        }
+        @keyframes ping {
+            75%, 100% {
+                transform: scale(2.5);
+                opacity: 0;
+            }
+        }
+        
+        /* Tactical Accuracy Circle Style */
+        .accuracy-circle-tactical {
+            stroke-dasharray: 6, 12;
+            stroke-linecap: round;
+            animation: rotate-dash 15s linear infinite;
+            filter: drop-shadow(0 0 4px rgba(255,255,255,0.3));
+        }
+
+        @keyframes rotate-dash {
+            from { stroke-dashoffset: 0; }
+            to { stroke-dashoffset: 100; }
+        }
+
+        .accuracy-fill-pulse {
+            animation: fill-pulse 4s ease-in-out infinite;
+        }
+
+        @keyframes fill-pulse {
+            0%, 100% { fill-opacity: 0.1; }
+            50% { fill-opacity: 0.18; }
+        }
+
+        /* Scanline Overlay Effect for Map */
+        .map-scanlines::after {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.03) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.01), rgba(0, 255, 0, 0.005), rgba(0, 0, 255, 0.01));
+            background-size: 100% 4px, 4px 100%;
+            pointer-events: none;
+            z-index: 5;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #e2e8f0;
+            border-radius: 10px;
         }
     </style>
 <script type="importmap">

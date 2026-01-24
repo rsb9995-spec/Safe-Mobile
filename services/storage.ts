@@ -1,23 +1,30 @@
+import { User, DeviceState, DeviceLocation, LoginEntry, AuditLog, RemoteCommand, UserMetadata } from '../types';
 
-import { User, DeviceState, DeviceLocation, LoginEntry } from '../types';
+export const STORAGE_KEY = 'SAFE_MOBILE_LOCAL_VAULT_V3';
+const HISTORY_LIMIT = 1000;
+const DB_VERSION = '3.5.0';
 
-export const STORAGE_KEY = 'SAFE_MOBILE_PRO_DB';
-const HISTORY_LIMIT = 200; // Prevent localStorage quota crashes
-const DB_VERSION = '1.2.0';
+export class VaultError extends Error {
+  constructor(public message: string, public code?: string) {
+    super(message);
+    this.name = 'VaultError';
+  }
+}
 
 interface DB {
   version: string;
   users: User[];
+  auditLogs: AuditLog[];
   currentUser: User | null;
-  lastBackup?: number;
+  systemHealth: 'OPTIMAL' | 'SECURE';
+  lastLocalSync: number;
 }
 
 const hashPassword = (password: string): string => {
-  // Simple XOR with salt for demonstration of "vault" security
-  const salt = "SAFE_SALT_2025";
+  const salt = "LOCAL_ONLY_SAFE_SALT_2025";
   const salted = password + salt;
   return btoa(salted.split('').map((char, i) => 
-    String.fromCharCode(char.charCodeAt(0) ^ (i % 13))
+    String.fromCharCode(char.charCodeAt(0) ^ (i % 17))
   ).join(''));
 };
 
@@ -25,101 +32,79 @@ const initialDB: DB = {
   version: DB_VERSION,
   users: [
     {
-      id: 'ADM-001',
-      email: 'admin@safe.mobile',
-      password: hashPassword('admin'),
-      role: 'SUPER_ADMIN',
+      id: 'LOCAL-ADMIN',
+      email: 'admin@local.safe',
+      password: hashPassword('admin123'),
+      role: 'ADMIN',
       devices: [],
       isBlocked: false,
       isEmailVerified: true,
       createdAt: Date.now(),
       lastLogin: Date.now(),
-      loginHistory: [{ timestamp: Date.now(), status: 'SUCCESS' }]
+      loginHistory: [{ timestamp: Date.now(), status: 'SUCCESS', userAgent: 'Local Admin Node' }],
+      metadata: { 
+        accountStatus: 'ACTIVE', 
+        primaryDeviceOS: 'Internal',
+        totalCommandsIssued: 0,
+        lastKnownCity: 'Local Vault'
+      }
     }
   ],
-  currentUser: null
+  auditLogs: [],
+  currentUser: null,
+  systemHealth: 'OPTIMAL',
+  lastLocalSync: Date.now()
 };
 
 export const dbService = {
-  delay: (ms: number = 400) => new Promise(resolve => setTimeout(resolve, ms)),
-
-  /**
-   * Retrieves and migrates the database to current version
-   */
   getRawDB: (): DB => {
-    const data = localStorage.getItem(STORAGE_KEY);
-    if (!data) return initialDB;
     try {
-      const parsed = JSON.parse(data) as DB;
-      
-      // Perform Data Pruning/Migration
-      let modified = false;
-      parsed.users.forEach((u: User) => {
-        // Ensure arrays exist
-        if (!u.loginHistory) { u.loginHistory = []; modified = true; }
-        
-        // Cap Login History
-        if (u.loginHistory.length > HISTORY_LIMIT) {
-          u.loginHistory = u.loginHistory.slice(-HISTORY_LIMIT);
-          modified = true;
-        }
-
-        u.devices?.forEach(d => {
-          if (!d.locationHistory) { d.locationHistory = []; modified = true; }
-          // Cap Location History
-          if (d.locationHistory.length > HISTORY_LIMIT) {
-            d.locationHistory = d.locationHistory.slice(-HISTORY_LIMIT);
-            modified = true;
-          }
-        });
-      });
-
-      if (modified) {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
-      }
-      
-      return parsed;
+      const data = localStorage.getItem(STORAGE_KEY);
+      if (!data) return initialDB;
+      return JSON.parse(data) as DB;
     } catch (e) {
-      console.error("Critical DB Load Error:", e);
       return initialDB;
     }
   },
 
   saveDB: (db: DB) => {
-    db.version = DB_VERSION;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
-  },
-
-  findUserByEmail: async (email: string): Promise<User | undefined> => {
-    await dbService.delay();
-    const db = dbService.getRawDB();
-    return db.users.find(u => u.email.toLowerCase() === email.toLowerCase());
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(db));
+      db.lastLocalSync = Date.now();
+    } catch (e) {
+      throw new VaultError("Local storage quota exceeded.", "QUOTA_EXCEEDED");
+    }
   },
 
   authenticate: async (email: string, pass: string): Promise<User | null> => {
-    await dbService.delay(800);
     const db = dbService.getRawDB();
     const user = db.users.find(u => u.email.toLowerCase() === email.toLowerCase());
     
+    if (!user) throw new VaultError("Local identity record not found.", "AUTH_NOT_FOUND");
+    if (user.isBlocked) throw new VaultError("Identity administratively neutralized.", "AUTH_BLOCKED");
+
     const hashed = hashPassword(pass);
-    if (user && user.password === hashed) {
-      const loginEntry: LoginEntry = { timestamp: Date.now(), status: 'SUCCESS' };
-      user.loginHistory.push(loginEntry);
-      user.lastLogin = loginEntry.timestamp;
+    const success = user.password === hashed;
+    
+    const entry: LoginEntry = { 
+      timestamp: Date.now(), 
+      status: success ? 'SUCCESS' : 'FAILED',
+      userAgent: navigator.userAgent
+    };
+
+    user.loginHistory.unshift(entry);
+    if (success) {
+      user.lastLogin = entry.timestamp;
       db.currentUser = user;
       dbService.saveDB(db);
       return user;
-    } else if (user) {
-      user.loginHistory.push({ timestamp: Date.now(), status: 'FAILED' });
+    } else {
       dbService.saveDB(db);
+      throw new VaultError("Invalid credentials.", "AUTH_WRONG_PASS");
     }
-    return null;
   },
 
-  getCurrentUser: async (): Promise<User | null> => {
-    const db = dbService.getRawDB();
-    return db.currentUser;
-  },
+  getCurrentUser: async (): Promise<User | null> => dbService.getRawDB().currentUser,
 
   setCurrentUser: async (user: User | null) => {
     const db = dbService.getRawDB();
@@ -127,24 +112,12 @@ export const dbService = {
     dbService.saveDB(db);
   },
 
-  updateUser: async (updatedUser: User): Promise<void> => {
-    const db = dbService.getRawDB();
-    const index = db.users.findIndex(u => u.id === updatedUser.id);
-    if (index !== -1) {
-      db.users[index] = updatedUser;
-      if (db.currentUser?.id === updatedUser.id) {
-        db.currentUser = updatedUser;
-      }
-      dbService.saveDB(db);
-    }
-  },
-
   addUser: async (user: User): Promise<void> => {
-    await dbService.delay(600);
     const db = dbService.getRawDB();
-    if (user.password) {
-      user.password = hashPassword(user.password);
+    if (db.users.some(u => u.email.toLowerCase() === user.email.toLowerCase())) {
+      throw new VaultError("Identity already exists in local vault.", "USER_EXISTS");
     }
+    if (user.password) user.password = hashPassword(user.password);
     db.users.push(user);
     dbService.saveDB(db);
   },
@@ -152,75 +125,116 @@ export const dbService = {
   updateDevice: async (userId: string, device: DeviceState): Promise<void> => {
     const db = dbService.getRawDB();
     const user = db.users.find(u => u.id === userId);
-    if (user) {
-      const devIndex = user.devices.findIndex(d => d.id === device.id);
-      
-      // Permanent History Management
-      if (device.lastLocation) {
-        if (!device.locationHistory) device.locationHistory = [];
-        const lastInHistory = device.locationHistory[device.locationHistory.length - 1];
-        
-        // Add if significant change or first record
-        if (!lastInHistory || (
-          lastInHistory.lat !== device.lastLocation.lat || 
-          lastInHistory.lng !== device.lastLocation.lng
-        )) {
-          device.locationHistory.push(device.lastLocation);
-          // Prune history if it exceeds limit
-          if (device.locationHistory.length > HISTORY_LIMIT) {
-            device.locationHistory.shift(); 
-          }
-        }
-      }
-
-      if (devIndex !== -1) {
-        user.devices[devIndex] = device;
-      } else {
-        user.devices.push(device);
-      }
-      
-      // Keep currentUser in sync
-      if (db.currentUser?.id === userId) {
-        db.currentUser = user;
-      }
-      
-      dbService.saveDB(db);
+    if (!user) return;
+    
+    const devIdx = user.devices.findIndex(d => d.id === device.id);
+    if (devIdx !== -1) {
+      user.devices[devIdx] = { ...device };
+    } else {
+      user.devices.push(device);
     }
-  },
-
-  getAllUsers: async (): Promise<User[]> => {
-    return dbService.getRawDB().users;
-  },
-
-  exportDatabase: () => {
-    const db = dbService.getRawDB();
-    db.lastBackup = Date.now();
+    
+    if (db.currentUser?.id === userId) db.currentUser = user;
     dbService.saveDB(db);
-    const blob = new Blob([JSON.stringify(db, null, 2)], { type: 'application/json' });
+  },
+
+  // Added fix: Implementation for updating user metadata
+  updateUserMetadata: async (userId: string, metadata: Partial<UserMetadata>): Promise<void> => {
+    const db = dbService.getRawDB();
+    const userIdx = db.users.findIndex(u => u.id === userId);
+    if (userIdx === -1) return;
+    
+    db.users[userIdx].metadata = { ...db.users[userIdx].metadata, ...metadata };
+    if (db.currentUser?.id === userId) db.currentUser = db.users[userIdx];
+    dbService.saveDB(db);
+  },
+
+  // Added fix: Implementation for updating user (admin action)
+  updateUser: async (updatedUser: User, actor: User): Promise<void> => {
+    const db = dbService.getRawDB();
+    const idx = db.users.findIndex(u => u.id === updatedUser.id);
+    if (idx === -1) return;
+    
+    const oldUser = db.users[idx];
+    const action: AuditLog['action'] = updatedUser.isBlocked !== oldUser.isBlocked 
+      ? (updatedUser.isBlocked ? 'USER_BLOCK' : 'USER_UNBLOCK')
+      : 'SYSTEM_CONFIG_CHANGE';
+
+    db.users[idx] = updatedUser;
+    
+    const log: AuditLog = {
+      id: Math.random().toString(36).substring(7).toUpperCase(),
+      timestamp: Date.now(),
+      actorId: actor.id,
+      actorEmail: actor.email,
+      action,
+      targetId: updatedUser.id,
+      severity: 'MEDIUM'
+    };
+    db.auditLogs.unshift(log);
+
+    if (db.currentUser?.id === updatedUser.id) db.currentUser = updatedUser;
+    dbService.saveDB(db);
+  },
+
+  // Added fix: Implementation for deleting user (admin action)
+  deleteUser: async (userId: string, actor: User): Promise<void> => {
+    const db = dbService.getRawDB();
+    const user = db.users.find(u => u.id === userId);
+    if (!user) return;
+
+    db.users = db.users.filter(u => u.id !== userId);
+    
+    const log: AuditLog = {
+      id: Math.random().toString(36).substring(7).toUpperCase(),
+      timestamp: Date.now(),
+      actorId: actor.id,
+      actorEmail: actor.email,
+      action: 'USER_DELETE',
+      targetId: userId,
+      severity: 'HIGH'
+    };
+    db.auditLogs.unshift(log);
+
+    if (db.currentUser?.id === userId) db.currentUser = null;
+    dbService.saveDB(db);
+  },
+
+  // Added fix: Implementation for database export
+  exportDatabase: (actor: User): void => {
+    const db = dbService.getRawDB();
+    const dataStr = JSON.stringify(db, null, 2);
+    const blob = new Blob([dataStr], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `safe-mobile-vault-backup-${new Date().toISOString().split('T')[0]}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `safe-mobile-export-${Date.now()}.json`;
+    link.click();
+    
+    const log: AuditLog = {
+      id: Math.random().toString(36).substring(7).toUpperCase(),
+      timestamp: Date.now(),
+      actorId: actor.id,
+      actorEmail: actor.email,
+      action: 'DB_EXPORT',
+      severity: 'CRITICAL'
+    };
+    db.auditLogs.unshift(log);
+    dbService.saveDB(db);
   },
 
-  importDatabase: (jsonContent: string): boolean => {
-    try {
-      const parsed = JSON.parse(jsonContent);
-      if (parsed.users && Array.isArray(parsed.users)) {
-        localStorage.setItem(STORAGE_KEY, jsonContent);
-        return true;
-      }
-      return false;
-    } catch (e) {
-      console.error("Import failed:", e);
-      return false;
-    }
-  },
-
-  wipeDatabase: () => {
-    localStorage.removeItem(STORAGE_KEY);
-    window.location.reload();
+  getAllUsers: async (): Promise<User[]> => dbService.getRawDB().users,
+  getAuditLogs: async (): Promise<AuditLog[]> => dbService.getRawDB().auditLogs,
+  
+  getGlobalTelemetry: () => {
+    const db = dbService.getRawDB();
+    const allDevices = db.users.flatMap(u => u.devices.map(d => ({ ...d, ownerEmail: u.email })));
+    return {
+      totalUsers: db.users.length,
+      activeDevices: allDevices.filter(d => Date.now() - d.lastActive < 300000).length,
+      lockedDevices: allDevices.filter(d => d.isLocked).length,
+      allDevices,
+      lastSync: db.lastLocalSync
+    };
   }
 };
